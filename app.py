@@ -77,6 +77,6 @@ app.layout = html.Div(style={'backgroundColor': colors['background']}, children=
         }
     )
 ])
-
+heroku logs
 if __name__ == '__main__':
     app.run_server()
