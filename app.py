@@ -11,26 +11,19 @@ import datetime
 from flask import request
 import plotly.graph_objects as go
 
-VALID_USERNAME_PASSWORD_PAIRS = [
-    ['hello', 'world'],
-    ['house1', '123456'],
-    ['house2', '123456']
-]
 
-colors = {
-    'background': '#111111',
-    'text': '#7FDBFF'
-}
-
+# <editor-fold desc="App Setup">
+VALID_USERNAME_PASSWORD_PAIRS = [['admin', '134'], ['house1', '1234'], ['house2', '1234'], ['house3', '1234'],
+                                 ['house4', '1234'], ['house5', '1234'], ['house6', '1234']]
+colors = {'background': '#111111', 'text': '#7FDBFF'}
 external_stylesheets = ['assets/codepen.css']
-
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 server = app.server
-auth = dash_auth.BasicAuth(
-    app,
-    VALID_USERNAME_PASSWORD_PAIRS
-)
+auth = dash_auth.BasicAuth(app, VALID_USERNAME_PASSWORD_PAIRS)
+# </editor-fold>
 
+
+# <editor-fold desc="Thingspeak data parsing">
 # conn = urllib.request.urlopen("https://api.thingspeak.com/channels/959649/feeds.json?api_key=BBSDRD383CP6DE7B")
 # response = conn.read()
 # data = json.loads(response)
@@ -41,15 +34,10 @@ auth = dash_auth.BasicAuth(
 # for i in range(df["date"].count()):
 #     df.loc[i, "datetime"] = datetime.datetime.strptime(df.loc[i, "date"], '%Y-%m-%d %H:%M:%S')
 # df.to_excel("output.xlsx")
+# </editor-fold>
 
 
-def zerofy(list1):
-    for i in range(len(list1)):
-        if list1[i] < 0:
-            list1[i] = 0
-    return list1
-
-
+# <editor-fold desc="houses net consumption calculations">
 df = pd.read_excel('output1.xlsx')
 
 house1_net = df['field7'].sum() - df['field1'].sum()
@@ -58,132 +46,151 @@ house3_net = df['field9'].sum() - df['field3'].sum()
 house4_net = df['field10'].sum() - df['field4'].sum()
 house5_net = -df['field5'].sum()
 house6_net = -df['field6'].sum()
+# </editor-fold>
 
+
+# <editor-fold desc="Algorithm Variables creation">
 houses_list_net = [house1_net, house2_net, house3_net, house4_net, house5_net, house6_net]
-
 new_houses_list_net = houses_list_net
 money_owed = [0, 0, 0, 0, 0, 0]
 total_positive_power = 0
 number_of_neg_houses = 0
-neighbor_bill = [0,0,0,0,0,0]
+neighbor_bill = [0, 0, 0, 0, 0, 0]
+break1 = 6
+dewa_power = 0
+dewa_bill = [0, 0, 0, 0, 0, 0]
+bill_df = pd.DataFrame()
+# </editor-fold>
+
+
+# <editor-fold desc="Main Pricing Algorithm">
+
+# first for loop checks which houses have a surplus of power and pays them directly for the power
 for i in range(len(houses_list_net)):
+
+    # if there is suplus they are paid and ZEROFIED
     if houses_list_net[i] >= 0:
-        # print(i)
-        # print(houses_list_net)
-        money_owed[i] = houses_list_net[i] * 0.0001
+        money_owed[i] = houses_list_net[i] * 0.1
         total_positive_power = total_positive_power + houses_list_net[i]
         new_houses_list_net[i] = 0
+
+    # if there isnt surplus they are not paid
     else:
         money_owed[i] = 0
 
-# print("YOYOYO", new_houses_list_net)
-break1 = 6
-dewa_power = 0
+# while loop to distribute the extra neighbor power
 while break1 > 0:
+
+    # for loop to determine number of houses in need of power
     for i in range(len(new_houses_list_net)):
         if new_houses_list_net[i] < 0:
             number_of_neg_houses = number_of_neg_houses + 1
 
+    # calculate power delivered to each house by dividing the total power extra by the number of negative houses to
+    # assure fair distribution of power
     power_delivered = total_positive_power / number_of_neg_houses
 
+    # for loop to determine neighbor bill based on the power delivered
     for j in range(len(new_houses_list_net)):
+
+        # check only houses that need power
         if new_houses_list_net[j] < 0:
-            if power_delivered >= (-1)*new_houses_list_net[j]:
-                neighbor_bill[j] = neighbor_bill[j] + new_houses_list_net[j]*(-0.0001)
 
+            # if a house's power needs is less than the power delivered, this house will only pay for their needs
+            if power_delivered >= (-1) * new_houses_list_net[j]:
+                neighbor_bill[j] = neighbor_bill[j] + new_houses_list_net[j] * (-0.1)
 
-                # print('loooook at meeeeeeeeee;,',new_houses_list_net[j], neighbor_bill[j],power_delivered)
-            elif power_delivered < (-1)*new_houses_list_net[j]:
-                neighbor_bill[j] = neighbor_bill[j]+power_delivered*(0.0001)
-                print("if pd < house net ", neighbor_bill)
-
+            # if a house's power needs are less than power delivered, this house will pay for the full power delivered
+            # and will probably loop again through this phase if there is still power to deliver
+            elif power_delivered < (-1) * new_houses_list_net[j]:
+                neighbor_bill[j] = neighbor_bill[j] + power_delivered * (0.1)
             new_houses_list_net[j] = new_houses_list_net[j] + power_delivered
 
+    # we blank out the total power available to calculate it again after distribution to see who still needs power
     total_positive_power = 0
+
+    # for loop to check 2 things (surplus to dewa and recalculation of positive power)
     for i in range(len(new_houses_list_net)):
+
+        # if all the houses no longer need power the surplus is transfered to DEWA, distribution while loop ends
         if all(t >= 0 for t in new_houses_list_net):
             dewa_power = sum(new_houses_list_net)
             break1 = 0
+
+        # if loop isn't broken then the new total positive power is calculated without owing anyone money
+        # since it was not directly generated by them
         if new_houses_list_net[i] > 0:
             total_positive_power = total_positive_power + new_houses_list_net[i]
             new_houses_list_net[i] = 0
 
+    # number of negative houses is reset to 0 after distribution cycle and while loop break is decremented by 1
     number_of_neg_houses = 0
     break1 = break1 - 1
-# print('dewa power', dewa_power)
 
-dewa_bill=[0,0,0,0,0,0]
+# for loop is in charge of paying DEWA for the last unsupplied power after the distribution cycles between neighbors
 for i in range(len(new_houses_list_net)):
+
+    # if the house is still in need of power he is charged for the rest of the power taken by DEWA standards
     if new_houses_list_net[i] < 0:
-        dewa_bill[i] = new_houses_list_net[i]*-0.0003
+        dewa_bill[i] = new_houses_list_net[i] * -0.3
         new_houses_list_net[i] = 0
 
+    # otherwise the house pays nothing to DEWA
     else:
         dewa_bill[i] = 0
 
-
-bill_df = pd.DataFrame()
+# for loop to assign dewa, neighbor, credit, and bill depending on if house has money owed or not
 for i in range(len(new_houses_list_net)):
+
+    # if a house has money owed it means he doesnt need to pay anyone but get paid
     if money_owed[i] > 0:
         bill_df.loc[i, 'dewa'] = 0
         bill_df.loc[i, 'neighbor'] = 0
-
         bill_df.loc[i, 'credit'] = money_owed[i]
         bill_df.loc[i, 'bill'] = 0
 
+    # if a house does'nt have money owed it means he owes his neighbor, dewa, or both
     else:
-        bill_df.loc[i, 'dewa'] = dewa_bill[i]/0.0003
-        bill_df.loc[i, 'neighbor'] =neighbor_bill[i]/0.0001
+        bill_df.loc[i, 'dewa'] = dewa_bill[i] / 0.3
+        bill_df.loc[i, 'neighbor'] = neighbor_bill[i] / 0.1
         bill_df.loc[i, 'credit'] = 0
         bill_df.loc[i, 'bill'] = dewa_bill[i] + neighbor_bill[i]
+# </editor-fold>
 
 
-df['power_from_dewa_house1'] = df['field1'] - df['field7']
-df['power_to_dewa_house1'] = df['field7'] - df['field1']
-df['power_from_dewa_house2'] = df['field2'] - df['field8']
-df['power_to_dewa_house2'] = df['field8'] - df['field2']
-df['power_from_dewa_house3'] = df['field3'] - df['field9']
-df['power_to_dewa_house3'] = df['field9'] - df['field3']
-df['power_from_dewa_house4'] = df['field4'] - df['field10']
-df['power_to_dewa_house4'] = df['field10'] - df['field4']
-
-df['power_from_dewa_house1'] = zerofy(df['power_from_dewa_house1'])
-df['power_to_dewa_house1'] = zerofy(df['power_to_dewa_house1'])
-df['power_from_dewa_house2'] = zerofy(df['power_from_dewa_house2'])
-df['power_to_dewa_house2'] = zerofy(df['power_to_dewa_house2'])
-df['power_from_dewa_house3'] = zerofy(df['power_from_dewa_house3'])
-df['power_to_dewa_house3'] = zerofy(df['power_to_dewa_house3'])
-df['power_from_dewa_house4'] = zerofy(df['power_from_dewa_house4'])
-df['power_to_dewa_house4'] = zerofy(df['power_to_dewa_house4'])
-
-house1_p_in = df['power_from_dewa_house1'].sum()
-house1_p_out = df['power_to_dewa_house1'].sum()
-house2_p_in = df['power_from_dewa_house2'].sum()
-house2_p_out = df['power_to_dewa_house2'].sum()
-house3_p_in = df['power_from_dewa_house3'].sum()
-house3_p_out = df['power_to_dewa_house3'].sum()
-house4_p_in = df['power_from_dewa_house4'].sum()
-house4_p_out = df['power_to_dewa_house4'].sum()
-house5_p_in = df['field5'].sum()
-house6_p_in = df['field6'].sum()
-
+# <editor-fold desc="Data Assignment to consumption breakdown Pi Chart">
 labels = ['Private PV System', 'Neighbors', 'DEWA']
+values_h1 = [df['field7'].sum() / df['field1'].sum(), bill_df.loc[0, 'neighbor'] / df['field1'].sum(),
+             bill_df.loc[0, 'dewa'] / df['field1'].sum()]
+values_h2 = [df['field8'].sum() / df['field2'].sum(), bill_df.loc[1, 'neighbor'] / df['field1'].sum(),
+             bill_df.loc[1, 'dewa'] / df['field1'].sum()]
+values_h3 = [df['field9'].sum() / df['field3'].sum(), bill_df.loc[2, 'neighbor'] / df['field1'].sum(),
+             bill_df.loc[2, 'dewa'] / df['field1'].sum()]
+values_h4 = [df['field10'].sum() / df['field4'].sum(), bill_df.loc[3, 'neighbor'] / df['field1'].sum(),
+             bill_df.loc[3, 'dewa'] / df['field1'].sum()]
+values_h5 = [0, bill_df.loc[4, 'neighbor'] / df['field1'].sum(), bill_df.loc[4, 'dewa'] / df['field1'].sum()]
+values_h6 = [0, bill_df.loc[5, 'neighbor'] / df['field1'].sum(), bill_df.loc[5, 'dewa'] / df['field1'].sum()]
 
-values_h1 = [df['field7'].sum()/df['field1'].sum(),bill_df.loc[0,'neighbor']/df['field1'].sum(), bill_df.loc[0, 'dewa']/df['field1'].sum()]
-values_h2 = [df['field8'].sum()/df['field2'].sum(),bill_df.loc[1,'neighbor']/df['field1'].sum(), bill_df.loc[1, 'dewa']/df['field1'].sum()]
-values_h3 = [df['field9'].sum()/df['field3'].sum(),bill_df.loc[2,'neighbor']/df['field1'].sum(), bill_df.loc[2, 'dewa']/df['field1'].sum()]
-values_h4 = [df['field10'].sum()/df['field4'].sum(),bill_df.loc[3,'neighbor']/df['field1'].sum(), bill_df.loc[3, 'dewa']/df['field1'].sum()]
-values_h5 = [0,bill_df.loc[4,'neighbor']/df['field1'].sum(), bill_df.loc[4, 'dewa']/df['field1'].sum()]
-values_h6 = [0,bill_df.loc[5,'neighbor']/df['field1'].sum(), bill_df.loc[5, 'dewa']/df['field1'].sum()]
+values_total_pv = values_h1[0] + values_h2[0] + values_h3[0] + values_h4[0] + values_h5[0] + values_h6[0]
+values_total_nb = values_h1[1] + values_h2[1] + values_h3[1] + values_h4[1] + values_h5[1] + values_h6[1]
+values_total_dw = values_h1[2] + values_h2[2] + values_h3[2] + values_h4[2] + values_h5[2] + values_h6[2]
 
-app.layout = html.Div(style={'backgroundColor': colors['background'], 'display': 'hidden'}, children=[
+values_total = [values_total_pv, values_total_nb, values_total_dw]
+# </editor-fold>
 
+
+# <editor-fold desc="authentication main page">
+app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
     html.H2(id='show-output', children=''),
-    html.Button('Authenticate', id='button'),
-
+    html.Button('Authenticate', id='button', style={'display': 'none'}),
 ])
 
 
+# </editor-fold>
+
+print(bill_df['credit'])
+print(bill_df['bill'])
+# <editor-fold desc="Main username specific callback">
 @app.callback(
     Output(component_id='show-output', component_property='children'),
     [Input(component_id='button', component_property='n_clicks')]
@@ -193,112 +200,337 @@ def update_output_div(n_clicks):
     if n_clicks:
         return ""
     else:
+        print(username)
         if username == "house1":
             app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
-
                 html.H1(
                     children='E-Chain Web App',
-                    style={
-                        'textAlign': 'center',
-                        'color': colors['text']
-                    }
+                    style={'textAlign': 'center', 'color': colors['text']}
                 ),
                 html.H2(
                     children='House 1',
-                    style={
-                        'textAlign': 'center',
-                        'color': colors['text']
-                    }
+                    style={'textAlign': 'center', 'color': colors['text']}
                 ),
-
                 dcc.Graph(
                     id='house1_consumption_graph',
-
                     figure={
                         'data': [
                             {'x': df["datetime"], 'y': df["field1"], 'type': 'bar', 'name': 'house 1'},
                             {'x': df["datetime"], 'y': df["field7"], 'type': 'bar', 'name': 'panel house 1'},
-
                         ],
                         'layout': {
                             'title': "house 1 Consumption",
                             'plot_bgcolor': colors['background'],
                             'paper_bgcolor': colors['background'],
-                            'font': {
-                                'color': colors['text']
-                            }
+                            'font': {'color': colors['text']}
                         }
                     }
                 ),
-
-                # dcc.Graph(
-                #     id='house1_production_graph',
-                #     figure={
-                #         'data': [
-                #             {'x': df["datetime"], 'y': df["field7"], 'type': 'bar', 'name': 'panel house 1'},
-                #         ],
-                #         'layout': {
-                #             'title': "house 1 Production",
-                #             'plot_bgcolor': colors['background'],
-                #             'paper_bgcolor': colors['background'],
-                #             'font': {
-                #                 'color': colors['text']
-                #             }
-                #         }
-                #     }
-                # ),
-
-                # dcc.Graph(
-                #     id='Microgrid_consumption',
-                #     figure={
-                #         'data': [
-                #             {'x': df["datetime"], 'y': df["power_from_dewa_house1"], 'type': 'line',
-                #              'name': 'extra power consumed from dewa'},
-                #             {'x': df["datetime"], 'y': df["power_to_dewa_house1"], 'type': 'line',
-                #              'name': 'extra power given to dewa'},
-                #         ],
-                #         'layout': {
-                #             'title': "house 1 Microgrid power transfer",
-                #             'plot_bgcolor': colors['background'],
-                #             'paper_bgcolor': colors['background'],
-                #             'font': {
-                #                 'color': colors['text']
-                #             }
-                #         }
-                #     }
-                # ),
                 dcc.Graph(
                     id='pi1',
                     figure={
                         'data': [go.Pie(labels=labels, values=values_h1)],
-
                         'layout': {
                             'title': "house 1 power consumption breakdown",
                             'plot_bgcolor': colors['background'],
                             'paper_bgcolor': colors['background'],
-                            'font': {
-                                'color': colors['text']
-                            }
+                            'font': {'color': colors['text']}
                         }
                     }
                 ),
                 html.H2(
                     children='Bill: ' + str(bill_df.loc[0, 'bill']) + ' AED',
-                    style={
-                        'textAlign': 'center',
-                        'color': colors['text']
-                    }
+                    style={'textAlign': 'center', 'color': colors['text']}
                 ),
                 html.H2(
                     children='Credit: ' + str(bill_df.loc[0, 'credit']) + ' AED',
-                    style={
-                        'textAlign': 'center',
-                        'color': colors['text']
-                    }
+                    style={'textAlign': 'center', 'color': colors['text']}
                 ),
             ])
-
+        elif username == "house2":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='House 2',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field2"], 'type': 'bar', 'name': 'house 2'},
+                            {'x': df["datetime"], 'y': df["field8"], 'type': 'bar', 'name': 'panel house 2'},
+                        ],
+                        'layout': {
+                            'title': "house 2 Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_h2)],
+                        'layout': {
+                            'title': "house 2 power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='Bill: ' + str(bill_df.loc[1, 'bill']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='Credit: ' + str(bill_df.loc[1, 'credit']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
+        elif username == "house3":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='House 3',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field3"], 'type': 'bar', 'name': 'house 3'},
+                            {'x': df["datetime"], 'y': df["field9"], 'type': 'bar', 'name': 'panel house 3'},
+                        ],
+                        'layout': {
+                            'title': "house 3 Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_h1)],
+                        'layout': {
+                            'title': "house 3 power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='Bill: ' + str(bill_df.loc[2, 'bill']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='Credit: ' + str(bill_df.loc[2, 'credit']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
+        elif username == "house4":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='House 4',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field4"], 'type': 'bar', 'name': 'house 4'},
+                            {'x': df["datetime"], 'y': df["field10"], 'type': 'bar', 'name': 'panel house 4'},
+                        ],
+                        'layout': {
+                            'title': "house 4 Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_h4)],
+                        'layout': {
+                            'title': "house 4 power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='Bill: ' + str(bill_df.loc[3, 'bill']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='Credit: ' + str(bill_df.loc[3, 'credit']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
+        elif username == "house5":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='House 5',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field5"], 'type': 'bar', 'name': 'house 1'}
+                        ],
+                        'layout': {
+                            'title': "house 5 Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_h5)],
+                        'layout': {
+                            'title': "house 5 power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='Bill: ' + str(bill_df.loc[4, 'bill']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='Credit: ' + str(bill_df.loc[4, 'credit']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
+        elif username == "house6":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='House 1',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field6"], 'type': 'bar', 'name': 'house 1'},
+                        ],
+                        'layout': {
+                            'title': "house 6 Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_h6)],
+                        'layout': {
+                            'title': "house 6 power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='Bill: ' + str(bill_df.loc[5, 'bill']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='Credit: ' + str(bill_df.loc[5, 'credit']) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
+        elif username == "admin":
+            app.layout = html.Div(style={'backgroundColor': colors['background']}, children=[
+                html.H1(
+                    children='E-Chain Web App',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='All Houses',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                dcc.Graph(
+                    id='house1_consumption_graph',
+                    figure={
+                        'data': [
+                            {'x': df["datetime"], 'y': df["field1"], 'type': 'bar', 'name': 'house 1'},
+                            {'x': df["datetime"], 'y': df["field2"], 'type': 'bar', 'name': 'house 2'},
+                            {'x': df["datetime"], 'y': df["field3"], 'type': 'bar', 'name': 'house 3'},
+                            {'x': df["datetime"], 'y': df["field4"], 'type': 'bar', 'name': 'house 4'},
+                            {'x': df["datetime"], 'y': df["field5"], 'type': 'bar', 'name': 'house 5'},
+                            {'x': df["datetime"], 'y': df["field6"], 'type': 'bar', 'name': 'house 6'},
+                            {'x': df["datetime"], 'y': df["field7"], 'type': 'bar', 'name': 'panel house 1'},
+                            {'x': df["datetime"], 'y': df["field8"], 'type': 'bar', 'name': 'panel house 2'},
+                            {'x': df["datetime"], 'y': df["field9"], 'type': 'bar', 'name': 'panel house 3'},
+                            {'x': df["datetime"], 'y': df["field10"], 'type': 'bar', 'name': 'panel house 4'},
+                        ],
+                        'layout': {
+                            'title': "houses Consumption",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                dcc.Graph(
+                    id='pi1',
+                    figure={
+                        'data': [go.Pie(labels=labels, values=values_total)],
+                        'layout': {
+                            'title': "houses power consumption breakdown",
+                            'plot_bgcolor': colors['background'],
+                            'paper_bgcolor': colors['background'],
+                            'font': {'color': colors['text']}
+                        }
+                    }
+                ),
+                html.H2(
+                    children='houses total Bill: ' + str(bill_df['bill'].sum()) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+                html.H2(
+                    children='houses total Credit: ' + str(bill_df['credit'].sum()) + ' AED',
+                    style={'textAlign': 'center', 'color': colors['text']}
+                ),
+            ])
         return app.layout
+# </editor-fold>
 
 
 app.scripts.config.serve_locally = True
